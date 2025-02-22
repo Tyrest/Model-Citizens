@@ -7,7 +7,13 @@ from typing import List
 import pandas as pd
 from dotenv import load_dotenv
 from openai import OpenAI
-from sklearn.metrics import accuracy_score, roc_auc_score, classification_report
+from rich.prompt import Confirm
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    precision_recall_curve,
+    roc_auc_score,
+)
 
 sys.path.append(".")
 
@@ -65,6 +71,8 @@ def score_df(df: pd.DataFrame) -> List[float]:
         df.iterrows(), description="Scoring sentences...", total=len(df)
     ):
         score = get_score(row["sentence"])
+        if score is None:
+            print("Error scoring: ", row["identifier"])
         scores.append(score)
     return scores
 
@@ -72,41 +80,60 @@ def score_df(df: pd.DataFrame) -> List[float]:
 def main():
     _, val_df, test_df = load_nlvr()
 
-    val_df = val_df.sample(5)
-    test_df = test_df.sample(5)
+    val_df = val_df
+    test_df = test_df
 
-    val_scores = score_df(val_df)
-    test_scores = score_df(test_df)
+    if not Confirm.ask(
+        f"Do you want to re-score the validation set? (len={len(val_df)})"
+    ):
+        val_df = pd.read_csv(VAL_OUTPUT_PATH)
+    else:
+        val_df["score"] = score_df(val_df)
 
-    val_df["score"] = val_scores
-    test_df["score"] = test_scores
+    if not Confirm.ask(f"Do you want to re-score the test set? (len={len(test_df)})"):
+        test_df = pd.read_csv(TEST_OUTPUT_PATH)
+    else:
+        test_df["score"] = score_df(test_df)
 
-    print(val_df["label"].value_counts())
-
-    num_falses = val_df["label"].value_counts()[False]
-    threshold = sum(sorted(val_scores)[num_falses - 1 : num_falses + 1]) / 2
-
-    print(f"Threshold: {threshold}")
+    # Select threshold that maximizes F1 score
+    precision, recall, thresholds = precision_recall_curve(
+        val_df["label"], val_df["score"]
+    )
+    f1 = 2 * (precision * recall) / (precision + recall)
+    threshold = thresholds[f1.argmax()]
+    print("Best Threshold:", threshold)
 
     val_df["prediction"] = val_df["score"] > threshold
     test_df["prediction"] = test_df["score"] > threshold
 
-    columns = ["label", "prediction", "score", "sentence"]
+    columns = [
+        "label",
+        "prediction",
+        "score",
+        "sentence",
+        "identifier",
+        "left",
+        "right",
+    ]
 
     val_df[columns].to_csv(VAL_OUTPUT_PATH, index=False)
     test_df[columns].to_csv(TEST_OUTPUT_PATH, index=False)
 
+    print("=" * 80)
+
     print("Validation Accuracy:", accuracy_score(val_df["label"], val_df["prediction"]))
     print("Validation AUC:", roc_auc_score(val_df["label"], val_df["score"]))
-    print("Validation Report:")
-    print(classification_report(val_df["label"], val_df["prediction"]))
+    # print("Validation Report:")
+    # print(classification_report(val_df["label"], val_df["prediction"]))
 
-    print()
+    print("-" * 80)
 
     print("Test Accuracy:", accuracy_score(test_df["label"], test_df["prediction"]))
     print("Test AUC:", roc_auc_score(test_df["label"], test_df["score"]))
-    print("Test Report:")
-    print(classification_report(test_df["label"], test_df["prediction"]))
+    # print("Test Report:")
+    # print(classification_report(test_df["label"], test_df["prediction"]))
+
+    print("=" * 80)
 
 
 if __name__ == "__main__":
