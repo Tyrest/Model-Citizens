@@ -21,7 +21,7 @@ Model-Minorities/
 ```
 
 ### Environment
-1. Create a new python 3.11 virtual environment with uv
+1. Create a new python 3.11 virtual environment with [uv](https://github.com/astral-sh/uv)
 ```bash
 uv venv -p 3.11
 ```
@@ -41,7 +41,7 @@ train_df, val_df, test_df = load_nlvr()
 # Now you can use the DataFrames as needed.
 ```
 
-If you want to use load_nlvr from a directory inside the project, you can use the following import:
+If you want to use load_nlvr from a directory inside this repo, you can use the following import:
 ```python
 import sys
 
