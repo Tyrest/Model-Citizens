@@ -25,8 +25,8 @@ load_dotenv()
 
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-VAL_OUTPUT_PATH = "tyler/data/val_scores.csv"
-TEST_OUTPUT_PATH = "tyler/data/test_scores.csv"
+VAL_OUTPUT_PATH = "tyler/data/unimodal_gpt_val_scores.csv"
+TEST_OUTPUT_PATH = "tyler/data/unimodal_gpt_test_scores.csv"
 
 
 @functools.cache
@@ -80,20 +80,14 @@ def score_df(df: pd.DataFrame) -> List[float]:
 def main():
     _, val_df, test_df = load_nlvr()
 
-    val_df = val_df
-    test_df = test_df
-
-    if not Confirm.ask(
-        f"Do you want to re-score the validation set? (len={len(val_df)})"
+    if Confirm.ask(
+        f"Do you want to re-score the validation and test sets? (len {len(val_df)} and {len(test_df)})"
     ):
-        val_df = pd.read_csv(VAL_OUTPUT_PATH)
-    else:
         val_df["score"] = score_df(val_df)
-
-    if not Confirm.ask(f"Do you want to re-score the test set? (len={len(test_df)})"):
-        test_df = pd.read_csv(TEST_OUTPUT_PATH)
-    else:
         test_df["score"] = score_df(test_df)
+    else:
+        val_df = pd.read_csv(VAL_OUTPUT_PATH)
+        test_df = pd.read_csv(TEST_OUTPUT_PATH)
 
     # Select threshold that maximizes F1 score
     precision, recall, thresholds = precision_recall_curve(
