@@ -26,12 +26,14 @@ from load_nlvr import load_nlvr
 
 load_dotenv()
 
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+# client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+client = OpenAI(api_key="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")
 
-COST_PER_TOKEN = 0.15 / 1_000_000
+COST_PER_TOKEN = 2.5 / 1_000_000
 
 VAL_OUTPUT_PATH = "tyler/data/multimodal_gpt_val_scores.csv"
 TEST_OUTPUT_PATH = "tyler/data/multimodal_gpt_test_scores.csv"
+TEST_OUTPUT_INTERMEDIATE_PATH = "tyler/data/multimodal_gpt_test_scores_intermediate.csv"
 
 
 def encode_image(image_path):
@@ -49,7 +51,7 @@ def encode_image(image_path):
 @functools.cache
 def get_score(sentence: str, left: str, right: str) -> float:
     completion = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4o",
         messages=[
             {
                 "role": "system",
@@ -104,45 +106,59 @@ def get_score(sentence: str, left: str, right: str) -> float:
 def score_df(df: pd.DataFrame) -> List[float]:
     scores = []
     total_tokens = 0
-    for _, row in progress_bar(
-        df.iterrows(), description="Scoring sentences...", total=len(df)
-    ):
-        score, tokens = get_score(row["sentence"], row["left"], row["right"])
-        if score is None:
-            print("Error scoring: ", row["identifier"])
-        scores.append(score)
-        total_tokens += tokens
-        if len(scores) % 10 == 0:
-            print(
-                f"Labels Scored: {len(scores)}, Current Tokens: {total_tokens}, Current Cost: ${COST_PER_TOKEN * total_tokens:.5f}"
-            )
+    with open(TEST_OUTPUT_INTERMEDIATE_PATH, "w") as f:
+        for _, row in progress_bar(
+            df.iterrows(), description="Scoring sentences...", total=len(df)
+        ):
+            score, tokens = get_score(row["sentence"], row["left"], row["right"])
+            if score is None:
+                print("Error scoring: ", row["identifier"])
+            scores.append(score)
+            total_tokens += tokens
+            if len(scores) % 10 == 0:
+                print(
+                    f"Labels Scored: {len(scores)}, Current Tokens: {total_tokens}, Current Cost: ${COST_PER_TOKEN * total_tokens:.5f}"
+                )
+            f.write(f"{row['identifier']},{score}\n")
     return scores
 
 
 def main():
     _, val_df, test_df = load_nlvr()
 
-    val_df = val_df.head(100)
-    test_df = test_df.head(100)
+    # val_df = val_df.head(1)
+    # test_df = test_df.head(5)
+
+    print(test_df)
 
     if Confirm.ask(
-        f"Do you want to re-score the validation and test sets? (len {len(val_df)} and {len(test_df)})"
+        f"Do you want to re-score the test set? (len {len(test_df)})"
     ):
-        val_df["score"] = score_df(val_df)
         test_df["score"] = score_df(test_df)
     else:
-        val_df = pd.read_csv(VAL_OUTPUT_PATH)
-        test_df = pd.read_csv(TEST_OUTPUT_PATH)
+        scores_df = pd.read_csv(TEST_OUTPUT_INTERMEDIATE_PATH)
 
-    # Select threshold that maximizes F1 score
-    precision, recall, thresholds = precision_recall_curve(
-        val_df["label"], val_df["score"]
-    )
-    f1 = 2 * (precision * recall) / (precision + recall)
-    threshold = thresholds[f1.argmax()]
-    print("Best Threshold:", threshold)
+        print(test_df)
+        print(scores_df)
 
-    val_df["prediction"] = val_df["score"] > threshold
+        test_df = test_df.merge(scores_df, on="identifier")
+        print(test_df)
+        # rename score_y to score
+
+        test_df = test_df.rename(columns={"score_y": "score"})
+        # remove rows with missing scores
+        # test_df = test_df[~test_df["score"].isnull()]
+
+    # # Select threshold that maximizes F1 score
+    # precision, recall, thresholds = precision_recall_curve(
+    #     val_df["label"], val_df["score"]
+    # )
+    # f1 = 2 * (precision * recall) / (precision + recall)
+    # threshold = thresholds[f1.argmax()]
+    # print("Best Threshold:", threshold)
+    threshold = 0.5
+
+    # val_df["prediction"] = val_df["score"] > threshold
     test_df["prediction"] = test_df["score"] > threshold
 
     columns = [
@@ -155,13 +171,15 @@ def main():
         "right",
     ]
 
-    val_df[columns].to_csv(VAL_OUTPUT_PATH, index=False)
+    # val_df[columns].to_csv(VAL_OUTPUT_PATH, index=False)
     test_df[columns].to_csv(TEST_OUTPUT_PATH, index=False)
+
+    test_df = pd.read_csv(TEST_OUTPUT_PATH)
 
     print("=" * 80)
 
-    print("Validation Accuracy:", accuracy_score(val_df["label"], val_df["prediction"]))
-    print("Validation AUC:", roc_auc_score(val_df["label"], val_df["score"]))
+    # print("Validation Accuracy:", accuracy_score(val_df["label"], val_df["prediction"]))
+    # print("Validation AUC:", roc_auc_score(val_df["label"], val_df["score"]))
     # print("Validation Report:")
     # print(classification_report(val_df["label"], val_df["prediction"]))
 
