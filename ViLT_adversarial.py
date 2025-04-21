@@ -16,6 +16,7 @@ from transformers import (
     Trainer,
     TrainingArguments
 )
+from safetensors.torch import load_file
 
 # ------------------ Config ------------------
 DATA_DIR = "data/nlvr/nlvr2/data"
@@ -81,7 +82,10 @@ class ViltForNLVR2(nn.Module):
             nn.Linear(hidden_size, num_labels)
         )
 
-    def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, pixel_values=None, labels=None):
+    def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, pixel_values=None, labels=None, epsilon=0.0):
+        # enable gradient for pixel_values if adversarial epsilon is set
+        if labels is not None and epsilon > 0.0 and pixel_values is not None:
+            pixel_values.requires_grad_(True)
         outputs = self.vilt(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -94,6 +98,28 @@ class ViltForNLVR2(nn.Module):
         if labels is not None:
             loss_fn = nn.CrossEntropyLoss()
             loss = loss_fn(logits, labels)
+            # compute FGSM adversarial loss if epsilon>0
+            if epsilon > 0.0 and pixel_values is not None:
+                # compute gradient wrt pixel_values
+                grads = torch.autograd.grad(loss, pixel_values, retain_graph=True)[0]
+                # generate adversarial pixel values
+                adv_pixels = pixel_values + epsilon * grads.sign()
+                adv_pixels = adv_pixels.detach()
+                # clamp pixel values to valid range
+                adv_pixels = torch.clamp(adv_pixels, 0, 1)
+                # forward pass with adversarial pixels
+                adv_outputs = self.vilt(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    token_type_ids=token_type_ids,
+                    pixel_values=adv_pixels,
+                )
+                adv_pooled = adv_outputs.pooler_output
+                adv_logits = self.classifier(adv_pooled)
+                loss_adv = loss_fn(adv_logits, labels)
+                # combine losses and logits
+                loss = (loss + loss_adv) / 2
+                logits = adv_logits
         return {"loss": loss, "logits": logits}
 
 
@@ -102,13 +128,14 @@ class ViltFineTuner(PreTrainedModel):
         super().__init__(config)
         self.model = ViltForNLVR2(pretrained_model="dandelin/vilt-b32-mlm", num_labels=config.num_labels)
 
-    def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, pixel_values=None, labels=None):
+    def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, pixel_values=None, labels=None, epsilon=0.0):
         return self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             pixel_values=pixel_values,
             labels=labels,
+            epsilon=epsilon,
         )
 
 
@@ -119,6 +146,7 @@ processor = AutoProcessor.from_pretrained("dandelin/vilt-b32-mlm")
 config = ViltConfig.from_pretrained("dandelin/vilt-b32-mlm")
 config.num_labels = 2
 model = ViltFineTuner(config)
+model.load_state_dict(load_file("./vilt-nlvr2-finetuned-checkpoint/model.safetensors"))
 
 train_dataset = NLVR2Dataset(train_df, processor)
 val_dataset = NLVR2Dataset(val_df, processor)
@@ -126,11 +154,11 @@ test_dataset = NLVR2Dataset(test_df, processor, is_test=True)
 
 # ------------------ Training Arguments ------------------
 training_args = TrainingArguments(
-    output_dir="./vilt-nlvr2-custom",
+    output_dir="./vilt-nlvr2-adversarial-image",
     evaluation_strategy="epoch",
     save_strategy="epoch",
-    per_device_train_batch_size=64,
-    per_device_eval_batch_size=64,
+    per_device_train_batch_size=32,
+    per_device_eval_batch_size=32,
     num_train_epochs=4,
     learning_rate=5e-5,
     weight_decay=0.01,
@@ -140,6 +168,7 @@ training_args = TrainingArguments(
     load_best_model_at_end=True,
     metric_for_best_model="accuracy",
     fp16=False,
+    gradient_accumulation_steps=2,
 )
 
 # ------------------ Evaluation Metric ------------------
@@ -149,8 +178,32 @@ def compute_metrics(eval_pred):
     acc = accuracy_score(labels, preds)
     return {"accuracy": acc}
 
+# ------------------ Custom FGSM Trainer ------------------
+class FGSMTrainer(Trainer):
+    def __init__(self, epsilon=0.0, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.epsilon = epsilon
+
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        labels = inputs.get("labels")
+        # use adversarial epsilon only in training mode
+        epsilon_val = self.epsilon if model.training else 0.0
+        outputs = model(
+            input_ids=inputs.get("input_ids"),
+            attention_mask=inputs.get("attention_mask"),
+            token_type_ids=inputs.get("token_type_ids"),
+            pixel_values=inputs.get("pixel_values"),
+            labels=labels,
+            epsilon=epsilon_val,
+        )
+        loss = outputs["loss"]
+        return (loss, outputs) if return_outputs else loss
+
 # ------------------ Initialize Trainer ------------------
-trainer = Trainer(
+# set FGSM epsilon for adversarial perturbation
+epsilon_val = 0.03 # adjust as needed
+trainer = FGSMTrainer(
+    epsilon=epsilon_val,
     model=model,
     args=training_args,
     train_dataset=train_dataset,
@@ -159,42 +212,12 @@ trainer = Trainer(
     compute_metrics=compute_metrics,
 )
 
+torch.cuda.empty_cache()
+
 # ------------------ Train and Save ------------------
 trainer.train()
-trainer.save_model("./vilt-nlvr2-finetuned")
+trainer.save_model("./vilt-nlvr2-adversarial-image-final")
 
 # ------------------ Evaluate on Validation Set ------------------
 val_result = trainer.evaluate(val_dataset)
 print(f"Validation Accuracy: {val_result['eval_accuracy']:.4f}")
-
-# ------------------ Run Inference on Test Set ------------------
-print("Running inference on test1...")
-
-model.eval()
-predictions = []
-
-with torch.no_grad():
-    for idx in tqdm(range(len(test_df))):
-        row = test_df.iloc[idx]
-        image1 = Image.open(row["left"]).convert("RGB")
-        image2 = Image.open(row["right"]).convert("RGB")
-        sentence = row["sentence"]
-
-        encoding = processor(
-            [image1, image2],
-            sentence,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=40
-        )
-        encoding = {k: v for k, v in encoding.items()}
-
-        outputs = model(**encoding)
-        pred_label = ID2LABEL[outputs["logits"].argmax(-1).item()]
-        predictions.append(pred_label)
-
-# ------------------ Save Test Predictions ------------------
-test_df["prediction"] = predictions
-test_df.to_csv("nlvr2_test1_predictions.csv", index=False)
-print("Test predictions saved to nlvr2_test1_predictions.csv")
