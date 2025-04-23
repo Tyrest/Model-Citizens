@@ -19,7 +19,7 @@ from transformers import (
 from safetensors.torch import load_file
 
 # ------------------ Config ------------------
-DATA_DIR = "data/nlvr/nlvr2/data"
+DATA_DIR = "/local/data/nlvr/nlvr2/data"
 IMAGE_DIR = os.path.join(DATA_DIR, "images")
 TRAIN_FILE = "train.json"
 VAL_FILE = "dev.json"
@@ -118,7 +118,7 @@ class ViltForNLVR2(nn.Module):
                 adv_logits = self.classifier(adv_pooled)
                 loss_adv = loss_fn(adv_logits, labels)
                 # combine losses and logits
-                loss = (loss + loss_adv) / 2
+                loss = loss_adv
                 logits = adv_logits
         return {"loss": loss, "logits": logits}
 
@@ -146,7 +146,7 @@ processor = AutoProcessor.from_pretrained("dandelin/vilt-b32-mlm")
 config = ViltConfig.from_pretrained("dandelin/vilt-b32-mlm")
 config.num_labels = 2
 model = ViltFineTuner(config)
-model.load_state_dict(load_file("./vilt-nlvr2-finetuned-checkpoint/model.safetensors"))
+model.load_state_dict(load_file("./checkpoint-5400/model.safetensors"))
 
 train_dataset = NLVR2Dataset(train_df, processor)
 val_dataset = NLVR2Dataset(val_df, processor)
@@ -157,18 +157,18 @@ training_args = TrainingArguments(
     output_dir="./vilt-nlvr2-adversarial-image",
     evaluation_strategy="epoch",
     save_strategy="epoch",
-    per_device_train_batch_size=32,
-    per_device_eval_batch_size=32,
+    per_device_train_batch_size=128,
+    per_device_eval_batch_size=128,
     num_train_epochs=4,
     learning_rate=5e-5,
     weight_decay=0.01,
     logging_dir="./logs",
     logging_steps=50,
-    save_total_limit=2,
+    save_total_limit=4,
     load_best_model_at_end=True,
     metric_for_best_model="accuracy",
     fp16=False,
-    gradient_accumulation_steps=2,
+    dataloader_num_workers=12,
 )
 
 # ------------------ Evaluation Metric ------------------

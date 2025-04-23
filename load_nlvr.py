@@ -6,9 +6,13 @@ TRAIN_FILE = "train.json"
 DEV_FILE = "dev.json"
 TEST_FILE = "test1.json"
 
-TRAIN_IMAGE_DIR = os.path.join("data", "images", "train")
-VAL_IMAGE_DIR = os.path.join("data", "dev")
-TEST_IMAGE_DIR = os.path.join("data", "test1")
+# TRAIN_IMAGE_DIR = os.path.join("data", "images", "train")
+# VAL_IMAGE_DIR = os.path.join("data", "dev")
+# TEST_IMAGE_DIR = os.path.join("data", "test1")
+
+TRAIN_IMAGE_DIR = "/local/data/images/train"
+VAL_IMAGE_DIR = "/local/data/dev"
+TEST_IMAGE_DIR = "/local/data/test1"
 
 
 def _process_val_df(df, image_dir):
