@@ -1,0 +1,9 @@
+checkpoint,cosine_similarity,attention_entropy,silhouette_score
+checkpoint-2700,0.0946,3.1038,0.0387
+checkpoint-2700,0.1096,3.0743,0.057
+checkpoint-2700,0.1026,3.0617,0.0387
+checkpoint-2700,0.106,3.0773,0.0441
+checkpoint-2700,0.1271,3.065,0.0536
+checkpoint-2700,0.0921,3.051,0.0547
+checkpoint-2700,0.1096,3.0572,0.0552
+checkpoint-2700,0.1046,3.0977,0.0429

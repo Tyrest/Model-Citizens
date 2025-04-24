@@ -9,7 +9,13 @@ Repository for Multimodal Machine Learning (11-777) team Model Citizens
 git submodule update --init
 ```
 
-2. Download the images from [https://lil.nlp.cornell.edu/resources/NLVR2/](https://lil.nlp.cornell.edu/resources/NLVR2/) and extract them into the `data` directory. After this, your directory structure should look like this:
+2. Download the images from [https://lil.nlp.cornell.edu/resources/NLVR2/](https://lil.nlp.cornell.edu/resources/NLVR2/) and extract them into the `data` directory. You can also run a few curl commands to do this:
+```
+curl https://lil.nlp.cornell.edu/resources/NLVR2/train_img.zip --output data/train_img.zip
+curl https://lil.nlp.cornell.edu/resources/NLVR2/dev_img.zip --output data/val_img.zip
+curl https://lil.nlp.cornell.edu/resources/NLVR2/test1_img.zip --output data/test1_img.zip
+```
+After this, your directory structure should look like this:
 ```
 Model-Minorities/
 └── data/
